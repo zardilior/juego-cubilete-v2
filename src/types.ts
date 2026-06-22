@@ -26,4 +26,5 @@ export interface GameState {
   votes: Record<string, boolean>; // Record con playerIDs -> booleans (true: Cree, false: No cree)
   challengerId: string | null;   // Jugador que inició el desafío de "No creo"
   devilDiceResult: CubileteSymbol | null; // Resultado del Dado Maldito si aplica
+  reRollsLeft: number;           // Cantidad de re-lanzamientos disponibles en el turno actual
 }

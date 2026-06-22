@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BoardProps } from 'boardgame.io/react';
+import { Stage, Container, Graphics, Text } from '@pixi/react';
+import * as PIXI from 'pixi.js';
 import { GameState, CubileteSymbol } from '../../types';
 
 const SYM_VALUES: Record<CubileteSymbol, number> = { 
@@ -11,10 +13,10 @@ function getBidValue(amount: number, symbol: CubileteSymbol): number {
   return baseValue + (amount - 1) * 6;
 }
 
-const PLAYER_AVATARS: Record<string, { name: string; color: string; bg: string; border: string }> = {
-  '0': { name: 'Alpha Ranger', color: '#818cf8', bg: 'rgba(99, 102, 241, 0.15)', border: '#6366f1' },
-  '1': { name: 'Vortex Phantom', color: '#34d399', bg: 'rgba(52, 211, 153, 0.15)', border: '#10b981' },
-  '2': { name: 'Nebula Sentinel', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.15)', border: '#ec4899' },
+const PLAYER_AVATARS: Record<string, { name: string; color: string; bg: string; border: string; hexColor: number }> = {
+  '0': { name: 'Alpha Ranger', color: '#818cf8', bg: 'rgba(99, 102, 241, 0.15)', border: '#6366f1', hexColor: 0x818cf8 },
+  '1': { name: 'Vortex Phantom', color: '#34d399', bg: 'rgba(52, 211, 153, 0.15)', border: '#10b981', hexColor: 0x34d399 },
+  '2': { name: 'Nebula Sentinel', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.15)', border: '#ec4899', hexColor: 0xf472b6 },
 };
 
 const AnimationStyles = () => (
@@ -53,6 +55,134 @@ const AnimationStyles = () => (
   `}</style>
 );
 
+// PixiJS Component: Draws a single interactive/animated die on the felt table
+interface PixiDieProps {
+  symbol: CubileteSymbol | string;
+  x: number;
+  y: number;
+  isQuintilla?: boolean;
+  isHighlighted?: boolean;
+  isSelected?: boolean;
+  scale?: number;
+  rotation?: number;
+  interactive?: boolean;
+  pointertap?: () => void;
+}
+
+const PixiDieComponent: React.FC<PixiDieProps> = ({
+  symbol,
+  x,
+  y,
+  isQuintilla = false,
+  isHighlighted = false,
+  isSelected = false,
+  scale = 1,
+  rotation = 0,
+  interactive = false,
+  pointertap,
+}) => {
+  const size = 50 * scale;
+  
+  const drawDie = React.useCallback((g: PIXI.Graphics) => {
+    g.clear();
+    
+    // Determine styles
+    let fill = 0xffffff;
+    let border = 0xcccccc;
+    let borderWidth = 2;
+
+    if (isQuintilla) {
+      fill = 0xfef3c7;
+      border = 0xd97706;
+      borderWidth = 3;
+    } else if (isSelected) {
+      fill = 0xf0fdf4;
+      border = 0x38bdf8; // Neon light blue border
+      borderWidth = 3;
+    } else if (isHighlighted) {
+      fill = 0xe0f2fe;
+      border = 0x0284c7;
+      borderWidth = 3;
+    }
+
+    g.beginFill(fill);
+    g.lineStyle(borderWidth, border, 1);
+    g.drawRoundedRect(-size / 2, -size / 2, size, size, 8);
+    g.endFill();
+
+    // Draw dots decoration or accents if Quintilla
+    if (isQuintilla) {
+      g.beginFill(0xd97706);
+      g.drawCircle(-size / 2 + 6, -size / 2 + 6, 2);
+      g.drawCircle(size / 2 - 6, -size / 2 + 6, 2);
+      g.drawCircle(-size / 2 + 6, size / 2 - 6, 2);
+      g.drawCircle(size / 2 - 6, size / 2 - 6, 2);
+      g.endFill();
+    }
+  }, [isQuintilla, isHighlighted, isSelected, size]);
+
+  // Determine text styles
+  let textColor = '#1f2937';
+  let fontSize = 22 * scale;
+  let fontWeight = 'bold';
+
+  if (isQuintilla) {
+    textColor = '#b45309';
+  } else if (isSelected) {
+    textColor = '#0284c7';
+  } else if (isHighlighted) {
+    textColor = '#0369a1';
+  }
+
+  const textStyle = new PIXI.TextStyle({
+    fontFamily: 'Arial, sans-serif',
+    fontSize,
+    fontWeight: fontWeight as any,
+    fill: textColor,
+    align: 'center',
+  });
+
+  return (
+    <Container 
+      x={x} 
+      y={isSelected ? y - 15 : y} 
+      rotation={rotation}
+      interactive={interactive}
+      pointertap={pointertap}
+    >
+      <Graphics draw={drawDie} />
+      <Text
+        text={symbol}
+        anchor={0.5}
+        x={0}
+        y={0}
+        style={textStyle}
+      />
+    </Container>
+  );
+};
+
+// PixiJS Component: Green Felt Table background
+const PixiFeltTable: React.FC<{ width: number; height: number }> = ({ width, height }) => {
+  const drawFelt = React.useCallback((g: PIXI.Graphics) => {
+    g.clear();
+    // Inner felt
+    g.beginFill(0x112219);
+    g.drawRect(0, 0, width, height);
+    g.endFill();
+    
+    // Felt borders/wood rim
+    g.lineStyle(8, 0x1f1610, 1);
+    g.drawRect(4, 4, width - 8, height - 8);
+    
+    // Golden border inlay
+    g.lineStyle(2, 0xd97706, 0.4);
+    g.drawRect(12, 12, width - 24, height - 24);
+  }, [width, height]);
+
+  return <Graphics draw={drawFelt} />;
+};
+
 export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
   G,
   ctx,
@@ -60,13 +190,59 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
   playerID,
   reset,
 }) => {
+  const [localPlayerID, setLocalPlayerID] = useState<string | null>(playerID);
   const [bidAmount, setBidAmount] = useState<number>(1);
   const [bidSymbol, setBidSymbol] = useState<CubileteSymbol>('9');
+  const [selectedDiceIndices, setSelectedDiceIndices] = useState<number[]>([]);
+  
+  // Shaking dice animation state
+  const [isDiceShaking, setIsDiceShaking] = useState(false);
+  const [shakingOffsets, setShakingOffsets] = useState<Array<{ r: number; dx: number; dy: number }>>([]);
+
   const [activeTabPlayer, setActiveTabPlayer] = useState<string>('0');
 
   const isGameOver = !!ctx.gameover;
   const currentPhase = ctx.phase;
   const currentPlayer = ctx.currentPlayer;
+
+  // Sync local player ID if props change
+  useEffect(() => {
+    setLocalPlayerID(playerID);
+  }, [playerID]);
+
+  // Clear kept dice selection and automatically align the active tab to the current player when the turn changes
+  useEffect(() => {
+    setActiveTabPlayer(currentPlayer);
+    setSelectedDiceIndices([]);
+    if (!playerID) {
+      setLocalPlayerID(currentPlayer);
+    }
+  }, [currentPlayer, playerID]);
+
+  // Trigger shake when active player changes or a bid is submitted
+  useEffect(() => {
+    setIsDiceShaking(true);
+    const interval = setInterval(() => {
+      setShakingOffsets(
+        Array.from({ length: 6 }, () => ({
+          r: (Math.random() - 0.5) * 0.2,
+          dx: (Math.random() - 0.5) * 8,
+          dy: (Math.random() - 0.5) * 8,
+        }))
+      );
+    }, 50);
+
+    const timeout = setTimeout(() => {
+      clearInterval(interval);
+      setIsDiceShaking(false);
+      setShakingOffsets([]);
+    }, 700);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [currentPlayer, G.currentBid]);
 
   const handleToggleDirection = () => {
     moves.handleDirectionChange();
@@ -81,25 +257,47 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
     moves.disbelieve();
   };
 
-  const handleVote = (_pid: string, believe: boolean) => {
-    moves.castVote(believe);
+  const handleVote = (pid: string, believe: boolean) => {
+    moves.castVote(believe, pid);
   };
 
   const handleResolveDevilDice = () => {
     moves.resolveDevilDice();
   };
 
-  // Helper to retrieve player info or defaults
-  const getPlayerDetails = (pid: string) => {
-    return PLAYER_AVATARS[pid] || { name: `Player ${pid}`, color: '#9ca3af', bg: 'rgba(156, 163, 175, 0.15)', border: '#9ca3af' };
+  const handleToggleDieSelect = (index: number) => {
+    const isMyTurn = currentPlayer === localPlayerID || !localPlayerID;
+    if (!isMyTurn || currentPhase !== 'bidding' || G.reRollsLeft <= 0 || activeTabPlayer !== currentPlayer) return;
+
+    setSelectedDiceIndices(prev =>
+      prev.includes(index) ? prev.filter(i => i !== index) : [...prev, index]
+    );
   };
 
-  // Bidding validity checks
+  const getGlobalDiceCounts = () => {
+    const counts: Record<CubileteSymbol, number> = {
+      '9': 0, '10': 0, 'J': 0, 'Q': 0, 'K': 0, 'A': 0
+    };
+    for (const pid in G.players) {
+      const roll = G.players[pid].currentRoll || [];
+      roll.forEach((sym) => {
+        if (counts[sym] !== undefined) {
+          counts[sym]++;
+        }
+      });
+    }
+    return counts;
+  };
+
+  const getPlayerDetails = (pid: string) => {
+    return PLAYER_AVATARS[pid] || { name: `Player ${pid}`, color: '#9ca3af', bg: 'rgba(156, 163, 175, 0.15)', border: '#9ca3af', hexColor: 0x9ca3af };
+  };
+
   const nextBidValue = getBidValue(bidAmount, bidSymbol);
   const isBidValid = G.currentBid === null || nextBidValue > G.currentBid.value;
 
   const renderBiddingControls = () => {
-    const isMyTurn = currentPlayer === playerID || !playerID;
+    const isMyTurn = currentPlayer === localPlayerID || !localPlayerID;
 
     return (
       <div style={styles.card}>
@@ -133,6 +331,35 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
             {G.currentBid !== null ? '🔒 Direction Locked' : `🔄 Invert Direction (Current: ${G.direction})`}
           </button>
         </div>
+
+        {isMyTurn && G.reRollsLeft > 0 && activeTabPlayer === currentPlayer && (
+          <div style={{ marginBottom: '15px' }}>
+            <button
+              type="button"
+              onClick={() => {
+                moves.reRollDice(selectedDiceIndices);
+                setSelectedDiceIndices([]);
+              }}
+              style={{
+                ...styles.button,
+                backgroundColor: '#d97706',
+                color: '#ffffff',
+                border: 'none',
+                width: '100%',
+                fontWeight: 'bold',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px'
+              }}
+            >
+              🎲 Re-roll Unselected ({G.reRollsLeft} left)
+            </button>
+            <div style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', marginTop: '5px' }}>
+              Click dice on the felt table to toggle KEEP (locks them from being re-rolled).
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmitBid} style={styles.form}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
@@ -243,7 +470,7 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
                     </div>
                     <div>
                       <div style={{ fontSize: '14px', fontWeight: '500', color: '#f3f4f6' }}>{pInfo.name}</div>
-                      <div style={{ fontSize: '11px', color: '#9ca3af' }}>{pid === playerID ? 'You' : 'Opponent'}</div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af' }}>{pid === localPlayerID ? 'You' : 'Opponent'}</div>
                     </div>
                   </div>
                   {hasVoted ? (
@@ -256,51 +483,89 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
                       ✓ {votesCast[pid] ? 'Believes' : 'Disbelieves'}
                     </span>
                   ) : (
-                    <span style={{
-                      ...styles.badge,
-                      backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                      color: '#9ca3af',
-                      borderColor: 'rgba(255, 255, 255, 0.1)'
-                    }}>
-                      ⏳ Pending...
-                    </span>
+                    (!playerID || playerID === pid) ? (
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleVote(pid, true)}
+                          style={{
+                            ...styles.button,
+                            ...styles.successButton,
+                            padding: '4px 8px',
+                            fontSize: '11px',
+                            height: 'auto',
+                            width: 'auto'
+                          }}
+                        >
+                          👍 Believe
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleVote(pid, false)}
+                          style={{
+                            ...styles.button,
+                            ...styles.dangerButton,
+                            padding: '4px 8px',
+                            fontSize: '11px',
+                            height: 'auto',
+                            width: 'auto'
+                          }}
+                        >
+                          👎 Disbelieve
+                        </button>
+                      </div>
+                    ) : (
+                      <span style={{
+                        ...styles.badge,
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                        color: '#9ca3af',
+                        borderColor: 'rgba(255, 255, 255, 0.1)'
+                      }}>
+                        ⏳ Pending...
+                      </span>
+                    )
                   )}
                 </div>
               );
             })}
           </div>
 
-          <div style={{ marginTop: '20px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '15px' }}>
-            <h4 style={{ color: '#f3f4f6', margin: '0 0 10px 0', textAlign: 'center', fontSize: '13px' }}>
-              Cast Your Vote
-            </h4>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-              <button 
-                onClick={() => handleVote(playerID || '0', true)} 
-                style={{...styles.button, ...styles.successButton, padding: '12px'}}
-              >
-                👍 Believe (Cree)
-              </button>
-              <button 
-                onClick={() => handleVote(playerID || '0', false)} 
-                style={{...styles.button, ...styles.dangerButton, padding: '12px'}}
-              >
-                👎 Disbelieve (No Cree)
-              </button>
+          {!playerID && (
+            <div style={{ fontSize: '11px', color: '#9ca3af', textAlign: 'center', marginTop: '15px' }}>
+              💡 Local Dev Mode: Cast votes for each opponent using the buttons next to their names.
             </div>
-          </div>
+          )}
+
+          {playerID && votesCast[playerID] === undefined && (
+            <div style={{ marginTop: '20px', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '15px' }}>
+              <h4 style={{ color: '#f3f4f6', margin: '0 0 10px 0', textAlign: 'center', fontSize: '13px' }}>
+                Cast Your Vote
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <button 
+                  type="button"
+                  onClick={() => handleVote(playerID, true)} 
+                  style={{...styles.button, ...styles.successButton, padding: '12px'}}
+                >
+                  👍 Believe (Cree)
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => handleVote(playerID, false)} 
+                  style={{...styles.button, ...styles.dangerButton, padding: '12px'}}
+                >
+                  👎 Disbelieve (No Cree)
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
   };
 
   const renderDevilDiceControls = () => {
-    const bidderId = G.currentBid?.playerId || '0';
-    const bidderInfo = getPlayerDetails(bidderId);
-    
-    // Determine status of devil dice
     const isSaved = G.devilDiceResult === G.currentBid?.symbol;
-    const glowClass = isSaved ? 'glowing-green' : 'glowing-red';
 
     return (
       <div style={styles.card}>
@@ -312,44 +577,12 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
           </p>
         </div>
 
-        <div style={styles.devilDiceDisplay}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <div style={{
-              ...styles.avatarLarge,
-              backgroundColor: bidderInfo.bg,
-              color: bidderInfo.color,
-              borderColor: bidderInfo.border
-            }}>
-              {bidderId}
-            </div>
-            <strong style={{ color: bidderInfo.color, fontSize: '14px' }}>{bidderInfo.name} (Bidder)</strong>
-          </div>
-
-          <div style={{ fontSize: '24px', color: '#9ca3af' }}>➔</div>
-
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-            <div 
-              className={glowClass} 
-              style={{
-                ...styles.devilDieSlot,
-                borderColor: isSaved ? '#10b981' : '#ef4444',
-                color: isSaved ? '#10b981' : '#ef4444',
-                backgroundColor: isSaved ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)'
-              }}
-            >
-              {G.devilDiceResult || '?'}
-            </div>
-            <span style={{ fontSize: '11px', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              Maldito Die
-            </span>
-          </div>
-        </div>
-
         <div style={{
           ...styles.devilResultBanner,
           backgroundColor: isSaved ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
           color: isSaved ? '#34d399' : '#f87171',
-          borderColor: isSaved ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'
+          borderColor: isSaved ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)',
+          marginBottom: '15px'
         }}>
           {isSaved 
             ? `✨ Saved! Rolled matching "${G.devilDiceResult}" symbol.` 
@@ -365,7 +598,6 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
             width: '100%', 
             fontWeight: 'bold', 
             padding: '12px',
-            marginTop: '15px'
           }}
         >
           Confirm & Resolve Round
@@ -401,7 +633,6 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
       }
     }
 
-    // Add Devil's Die if matched
     const isDevilMatched = G.devilDiceResult && G.devilDiceResult === G.currentBid.symbol;
     if (isDevilMatched) {
       totalActualCount += 1;
@@ -409,7 +640,6 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
 
     const bidAmount = G.currentBid.amount;
 
-    // Calculate outcomes
     for (const pid in breakdown) {
       const vote = breakdown[pid].vote;
       let loses = false;
@@ -453,7 +683,6 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
             <thead>
               <tr>
                 <th style={styles.th}>Player</th>
-                <th style={styles.th}>Rolled Hand</th>
                 <th style={styles.th}>Matches</th>
                 <th style={styles.th}>Vote</th>
                 <th style={styles.th}>Resolution Status</th>
@@ -486,20 +715,6 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
                           {pid}
                         </div>
                         <span style={{ fontWeight: '500', color: pInfo.color }}>{pInfo.name}</span>
-                      </div>
-                    </td>
-                    <td style={styles.td}>
-                      <div style={{ display: 'flex', gap: '3px' }}>
-                        {pData.roll.map((sym, i) => (
-                          <span key={i} style={{
-                            ...styles.die,
-                            borderColor: sym === G.currentBid?.symbol ? '#38bdf8' : 'rgba(255,255,255,0.1)',
-                            backgroundColor: sym === G.currentBid?.symbol ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255,255,255,0.05)',
-                            color: sym === G.currentBid?.symbol ? '#38bdf8' : '#d1d5db'
-                          }}>
-                            {sym}
-                          </span>
-                        ))}
                       </div>
                     </td>
                     <td style={{ ...styles.td, textAlign: 'center', color: '#f3f4f6' }}>
@@ -598,6 +813,102 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
     );
   };
 
+  // Helper to determine what to render inside the PixiJS canvas
+  const renderPixiElements = () => {
+    // 1. Devil's Die Phase: Render a single large spinning Devil's Die in the center
+    if (currentPhase === 'devilDice' && G.devilDiceResult) {
+      const isSaved = G.devilDiceResult === G.currentBid?.symbol;
+      // We animate the rotation by referencing a timestamp inside React/PixiJS
+      const t = Date.now() / 1000;
+      return (
+        <Container x={270} y={170}>
+          <PixiDieComponent 
+            symbol={G.devilDiceResult} 
+            x={0} 
+            y={0} 
+            scale={2.0} 
+            isHighlighted={isSaved}
+            rotation={isSaved ? 0 : t * 0.5} 
+          />
+          <Text 
+            text="Devil's Die" 
+            anchor={0.5} 
+            y={80} 
+            style={new PIXI.TextStyle({ fontFamily: 'Arial', fontSize: 16, fill: '#ef4444', fontWeight: 'bold' })} 
+          />
+        </Container>
+      );
+    }
+
+    // 2. Voting/Scorecard/Bidding: Render standard player dice
+    const pRoll = G.players[activeTabPlayer]?.currentRoll || [];
+    const hasBuffer = G.players[activeTabPlayer]?.hasQuintilla;
+    const bidSymbol = G.currentBid?.symbol;
+    const isMyTurn = currentPlayer === playerID || !playerID;
+    const canInteractWithDice = isMyTurn && currentPhase === 'bidding' && G.reRollsLeft > 0 && activeTabPlayer === currentPlayer;
+
+    return (
+      <Container x={20} y={40}>
+        {/* Render Title info */}
+        <Text 
+          text={`${getPlayerDetails(activeTabPlayer).name}'s Dice Pool`}
+          x={10}
+          y={10}
+          style={new PIXI.TextStyle({ fontFamily: 'Arial', fontSize: 16, fill: '#f3f4f6', fontWeight: 'bold' })}
+        />
+
+        {/* Normal dice pool (up to 5) */}
+        {pRoll.map((sym, index) => {
+          const shake = shakingOffsets[index] || { dx: 0, dy: 0, r: 0 };
+          const posX = 70 + index * 80 + shake.dx;
+          const posY = 130 + shake.dy;
+          const isMatch = sym === bidSymbol;
+          const isSelected = selectedDiceIndices.includes(index);
+          return (
+            <PixiDieComponent
+              key={index}
+              symbol={sym}
+              x={posX}
+              y={posY}
+              isHighlighted={isMatch}
+              isSelected={isSelected}
+              rotation={shake.r}
+              interactive={canInteractWithDice}
+              pointertap={() => handleToggleDieSelect(index)}
+            />
+          );
+        })}
+
+        {/* Quintilla buffer extra life (6th die) */}
+        {hasBuffer && (
+          <Container x={70} y={230}>
+            <PixiDieComponent 
+              symbol="+1" 
+              x={0} 
+              y={0} 
+              isQuintilla={true} 
+            />
+            <Text 
+              text="Quintilla Life" 
+              anchor={0.5} 
+              y={45} 
+              style={new PIXI.TextStyle({ fontFamily: 'Arial', fontSize: 11, fill: '#f59e0b', fontWeight: 'bold' })} 
+            />
+          </Container>
+        )}
+
+        {isDiceShaking && (
+          <Text
+            text="🎲 Rolling..."
+            x={10}
+            y={245}
+            style={new PIXI.TextStyle({ fontFamily: 'Arial', fontSize: 13, fill: '#34d399', fontWeight: 'bold' })}
+          />
+        )}
+      </Container>
+    );
+  };
+
   return (
     <div style={styles.container}>
       <AnimationStyles />
@@ -608,9 +919,33 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
             <h1 style={styles.title}>Cubilete Variation</h1>
             <p style={styles.subtitle}>Developer Debugging Dashboard</p>
           </div>
-          <button onClick={() => reset?.()} style={{ ...styles.button, padding: '6px 12px', fontSize: '12px' }}>
-            🔄 Reset Game State
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: '500' }}>View As:</span>
+              <select
+                value={localPlayerID || 'spectator'}
+                onChange={(e) => setLocalPlayerID(e.target.value === 'spectator' ? null : e.target.value)}
+                style={{
+                  ...styles.select,
+                  padding: '4px 8px',
+                  fontSize: '12px',
+                  backgroundColor: 'rgba(255,255,255,0.05)',
+                  color: '#f3f4f6',
+                  borderColor: 'rgba(255,255,255,0.1)',
+                  height: 'auto',
+                  width: 'auto'
+                }}
+              >
+                <option value="0">Player 0 (Alpha)</option>
+                <option value="1">Player 1 (Vortex)</option>
+                <option value="2">Player 2 (Nebula)</option>
+                <option value="spectator">Spectator (All)</option>
+              </select>
+            </div>
+            <button onClick={() => reset?.()} style={{ ...styles.button, padding: '6px 12px', fontSize: '12px' }}>
+              🔄 Reset Game State
+            </button>
+          </div>
         </div>
       </header>
 
@@ -628,45 +963,41 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
           <span style={styles.statusLabel}>Direction</span>
           <strong style={{ color: '#f3f4f6' }}>{G.direction}</strong>
         </div>
+        <div style={{ ...styles.statusCol, borderLeft: '1px solid rgba(255,255,255,0.08)', paddingLeft: '15px' }}>
+          <span style={styles.statusLabel}>Total Table Dice Counts</span>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '3px' }}>
+            {Object.entries(getGlobalDiceCounts()).map(([sym, count]) => (
+              <div key={sym} style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                backgroundColor: 'rgba(255,255,255,0.04)',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                border: '1px solid rgba(255,255,255,0.08)',
+                fontSize: '11px',
+                color: '#f3f4f6'
+              }}>
+                <span style={{ fontWeight: 'bold', color: '#f59e0b' }}>{sym}</span>
+                <span style={{ color: '#34d399', fontWeight: 'bold' }}>{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div style={styles.grid}>
         {/* Left Side: Game Board State & Players */}
         <div style={styles.leftCol}>
+          {/* PixiJS Interactive Felt Table Card */}
           <div style={styles.card}>
-            <h3 style={styles.cardTitle}>Active Bid Table</h3>
-            {G.currentBid ? (
-              <div style={styles.activeBidCard}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{
-                      ...styles.avatarSmall,
-                      backgroundColor: getPlayerDetails(G.currentBid.playerId).bg,
-                      color: getPlayerDetails(G.currentBid.playerId).color,
-                      borderColor: getPlayerDetails(G.currentBid.playerId).border
-                    }}>
-                      {G.currentBid.playerId}
-                    </div>
-                    <div>
-                      <div style={{ fontSize: '13px', color: '#9ca3af' }}>Bidder</div>
-                      <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#f3f4f6' }}>
-                        {getPlayerDetails(G.currentBid.playerId).name}
-                      </div>
-                    </div>
-                  </div>
-                  <span style={{ ...styles.badge, backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', borderColor: 'rgba(245, 158, 11, 0.3)' }}>
-                    Rank Value: {G.currentBid.value}
-                  </span>
-                </div>
-                <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#f3f4f6', textAlign: 'center', padding: '15px 0', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                  {G.currentBid.amount} x {G.currentBid.symbol}
-                </div>
-              </div>
-            ) : (
-              <div style={styles.emptyState}>
-                No bids placed yet this round. Waiting for first bid.
-              </div>
-            )}
+            <h3 style={styles.cardTitle}>Felt Table Canvas (React-PixiJS)</h3>
+            <div style={styles.feltContainer}>
+              <Stage width={510} height={320} options={{ backgroundColor: 0x112219, antialias: true }}>
+                <PixiFeltTable width={510} height={320} />
+                {renderPixiElements()}
+              </Stage>
+            </div>
           </div>
 
           <div style={styles.card}>
@@ -694,7 +1025,7 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
             </div>
             
             <div style={styles.tabContent}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
                   <div style={styles.metaLabel}>Player Name</div>
                   <strong style={{ color: getPlayerDetails(activeTabPlayer).color, fontSize: '16px' }}>
@@ -706,45 +1037,6 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
                   <strong style={{ color: '#f3f4f6', fontSize: '18px' }}>
                     {G.players[activeTabPlayer]?.diceCount}
                   </strong>
-                </div>
-              </div>
-
-              {/* Special Quintilla buffer view */}
-              {G.players[activeTabPlayer]?.hasQuintilla && (
-                <div className="glowing-gold" style={styles.quintillaBuffer}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '20px' }}>🌟</span>
-                    <div>
-                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#f59e0b' }}>Quintilla Buffer Active</div>
-                      <div style={{ fontSize: '10px', color: '#d1d5db' }}>Extra buffer life. Prevents next loss.</div>
-                    </div>
-                  </div>
-                  <div style={{
-                    ...styles.die,
-                    borderColor: '#f59e0b',
-                    backgroundColor: 'rgba(245, 158, 11, 0.2)',
-                    color: '#f59e0b',
-                    fontWeight: 'bold',
-                    width: '32px',
-                    height: '32px',
-                    lineHeight: '32px',
-                    margin: 0
-                  }}>
-                    +1
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <div style={{ ...styles.metaLabel, marginBottom: '8px' }}>Current Roll (Hidden to others)</div>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  {G.players[activeTabPlayer]?.currentRoll && G.players[activeTabPlayer].currentRoll.length > 0 ? (
-                    G.players[activeTabPlayer].currentRoll.map((sym, index) => (
-                      <span key={index} style={styles.die}>{sym}</span>
-                    ))
-                  ) : (
-                    <em style={{ color: '#9ca3af', fontSize: '13px' }}>None (Needs rolling)</em>
-                  )}
                 </div>
               </div>
             </div>
@@ -766,7 +1058,7 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
           <div style={styles.card}>
             <h3 style={styles.cardTitle}>State Inspector</h3>
             <pre style={styles.pre}>
-              {JSON.stringify({ G, ctx, playerID }, null, 2)}
+              {JSON.stringify({ G, ctx, playerID: localPlayerID }, null, 2)}
             </pre>
           </div>
         </div>
@@ -928,125 +1220,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 'bold',
     border: '1px solid transparent',
   },
-  activeBidCard: {
-    backgroundColor: 'rgba(0,0,0,0.15)',
-    borderRadius: '8px',
-    padding: '15px',
-    border: '1px solid rgba(255,255,255,0.04)',
-  },
-  emptyState: {
-    color: '#9ca3af',
-    textAlign: 'center',
-    padding: '30px 0',
-    fontSize: '13px',
-    fontStyle: 'italic',
-  },
-  bidPreview: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    fontSize: '13px',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    padding: '8px 12px',
-    borderRadius: '6px',
-  },
-  tabs: {
-    display: 'flex',
-    borderBottom: '1px solid rgba(255,255,255,0.08)',
-    marginBottom: '15px',
-    gap: '10px',
-  },
-  tabButton: {
-    padding: '8px 4px',
-    border: 'none',
-    backgroundColor: 'transparent',
-    cursor: 'pointer',
-    fontSize: '13px',
-  },
-  tabContent: {
-    padding: '5px 0',
-  },
-  metaLabel: {
-    fontSize: '11px',
-    color: '#9ca3af',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-  },
-  die: {
-    display: 'inline-block',
-    width: '34px',
-    height: '34px',
-    lineHeight: '32px',
-    textAlign: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
-    borderRadius: '6px',
-    fontWeight: 'bold',
-    fontSize: '14px',
-    color: '#f3f4f6',
-  },
-  avatarSmall: {
-    width: '28px',
-    height: '28px',
-    borderRadius: '50%',
-    textAlign: 'center',
-    lineHeight: '26px',
-    fontSize: '12px',
-    fontWeight: 'bold',
-    border: '1px solid',
-  },
-  avatarLarge: {
-    width: '56px',
-    height: '56px',
-    borderRadius: '50%',
-    textAlign: 'center',
-    lineHeight: '54px',
-    fontSize: '24px',
-    fontWeight: 'bold',
-    border: '2px solid',
-  },
-  quintillaBuffer: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
-    border: '1px dashed #f59e0b',
-    borderRadius: '8px',
-    padding: '8px 12px',
-    marginBottom: '15px',
-  },
-  pre: {
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-    padding: '12px',
-    borderRadius: '6px',
-    overflowX: 'auto',
-    maxHeight: '220px',
-    fontSize: '11px',
-    color: '#9ca3af',
-    border: '1px solid rgba(255, 255, 255, 0.04)',
-    fontFamily: 'monospace',
-  },
-  overlay: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    backgroundColor: 'rgba(7, 11, 20, 0.85)',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 999,
-    backdropFilter: 'blur(6px)',
-  },
-  modal: {
-    backgroundColor: '#111827',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
-    borderRadius: '16px',
-    padding: '24px',
-    width: '100%',
-    maxWidth: '440px',
-    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)',
-  },
   bidHighlightBox: {
     backgroundColor: 'rgba(255, 255, 255, 0.03)',
     borderRadius: '8px',
@@ -1068,23 +1241,6 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: 'rgba(255,255,255,0.02)',
     borderRadius: '8px',
     border: '1px solid rgba(255,255,255,0.04)',
-  },
-  devilDiceDisplay: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: '30px',
-    margin: '20px 0',
-  },
-  devilDieSlot: {
-    width: '56px',
-    height: '56px',
-    borderRadius: '12px',
-    border: '3px solid',
-    textAlign: 'center',
-    lineHeight: '50px',
-    fontSize: '28px',
-    fontWeight: 'bold',
   },
   devilResultBanner: {
     padding: '10px',
@@ -1185,5 +1341,101 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '12px',
     padding: '15px',
     marginBottom: '25px',
+  },
+  feltContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    backgroundColor: '#070a13',
+    padding: '10px',
+    borderRadius: '10px',
+    border: '1px solid rgba(255, 255, 255, 0.05)',
+  },
+  tabs: {
+    display: 'flex',
+    borderBottom: '1px solid rgba(255,255,255,0.08)',
+    marginBottom: '15px',
+    gap: '10px',
+  },
+  tabButton: {
+    padding: '8px 4px',
+    border: 'none',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    fontSize: '13px',
+  },
+  tabContent: {
+    padding: '5px 0',
+  },
+  metaLabel: {
+    fontSize: '11px',
+    color: '#9ca3af',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  },
+  avatarSmall: {
+    width: '28px',
+    height: '28px',
+    borderRadius: '50%',
+    textAlign: 'center',
+    lineHeight: '26px',
+    fontSize: '12px',
+    fontWeight: 'bold',
+    border: '1px solid',
+  },
+  avatarLarge: {
+    width: '56px',
+    height: '56px',
+    borderRadius: '50%',
+    textAlign: 'center',
+    lineHeight: '54px',
+    fontSize: '24px',
+    fontWeight: 'bold',
+    border: '2px solid',
+  },
+  pre: {
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+    padding: '12px',
+    borderRadius: '6px',
+    overflowX: 'auto',
+    maxHeight: '220px',
+    fontSize: '11px',
+    color: '#9ca3af',
+    border: '1px solid rgba(255, 255, 255, 0.04)',
+    fontFamily: 'monospace',
+  },
+  overlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(7, 11, 20, 0.85)',
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 999,
+    backdropFilter: 'blur(6px)',
+  },
+  modal: {
+    backgroundColor: '#111827',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: '16px',
+    padding: '24px',
+    width: '100%',
+    maxWidth: '440px',
+    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4)',
+  },
+  die: {
+    display: 'inline-block',
+    width: '34px',
+    height: '34px',
+    lineHeight: '32px',
+    textAlign: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
+    borderRadius: '6px',
+    fontWeight: 'bold',
+    fontSize: '14px',
+    color: '#f3f4f6',
   },
 };

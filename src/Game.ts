@@ -33,7 +33,8 @@ export const CubileteVariation: Game<GameState> = {
       currentBid: null,
       votes: {},
       challengerId: null,
-      devilDiceResult: null
+      devilDiceResult: null,
+      reRollsLeft: 1
     };
   },
 
@@ -70,6 +71,9 @@ export const CubileteVariation: Game<GameState> = {
       },
       
       turn: {
+        onBegin: ({ G }) => {
+          G.reRollsLeft = 1;
+        },
         order: {
           first: ({ ctx }) => ctx.playOrderPos,
           next: ({ G, ctx }) => {
@@ -86,6 +90,34 @@ export const CubileteVariation: Game<GameState> = {
       },
 
       moves: {
+        reRollDice: ({ G, ctx, random }, keepIndices: number[]) => {
+          if (G.reRollsLeft <= 0) return INVALID_MOVE;
+          const pid = ctx.currentPlayer;
+          const player = G.players[pid];
+          const symbols: CubileteSymbol[] = ['9', '10', 'J', 'Q', 'K', 'A'];
+
+          // Conteo estándar (ignora el dado extra buffer de Quintilla)
+          const rollCount = player.hasQuintilla ? player.diceCount - 1 : player.diceCount;
+          
+          const newRoll: CubileteSymbol[] = [...player.currentRoll];
+          for (let d = 0; d < rollCount; d++) {
+            if (!keepIndices.includes(d)) {
+              const randomNum = random ? random.Number() : Math.random();
+              const randomSym = symbols[Math.floor(randomNum * 6)];
+              newRoll[d] = randomSym;
+            }
+          }
+          player.currentRoll = newRoll;
+          G.reRollsLeft -= 1;
+
+          // Verificar si saca Quintilla tras el re-lanzamiento
+          const isQuintilla = newRoll.length >= 5 && newRoll.every(val => val === newRoll[0]);
+          if (isQuintilla && !player.hasQuintilla) {
+            player.hasQuintilla = true;
+            player.diceCount += 1;
+          }
+        },
+
         handleDirectionChange: ({ G }) => {
           if (G.currentBid !== null) return INVALID_MOVE; // Solo antes de la primera puja
           G.direction = G.direction === GameDirection.CLOCKWISE 
@@ -113,8 +145,26 @@ export const CubileteVariation: Game<GameState> = {
         disbelieve: ({ G, ctx, events }) => {
           if (G.currentBid === null) return INVALID_MOVE;
           G.challengerId = ctx.currentPlayer;
-          G.votes = {}; // Inicializar la votación de la mesa
-          events.setPhase('voting'); // Pausa la ronda e inicia votación colectiva
+          G.votes = {
+            [G.currentBid.playerId]: true, // El que pujó cree
+            [ctx.currentPlayer]: false     // El que desafía no cree
+          };
+
+          const activePlayersCount = Object.values(G.players).filter(p => p.diceCount > 0).length;
+          if (Object.keys(G.votes).length === activePlayersCount) {
+            let realCount = 0;
+            for (const pid in G.players) {
+              const matches = G.players[pid].currentRoll.filter(s => s === G.currentBid!.symbol).length;
+              realCount += matches;
+            }
+            if (realCount === G.currentBid.amount - 1) {
+              events.setPhase('devilDice');
+            } else {
+              events.setPhase('resolution');
+            }
+          } else {
+            events.setPhase('voting');
+          }
         }
       }
     },
@@ -125,8 +175,12 @@ export const CubileteVariation: Game<GameState> = {
         stages: {
           voteStage: {
             moves: {
-              castVote: ({ G, ctx, events, playerID }, believe: boolean) => {
-                const pID = playerID || ctx.currentPlayer;
+              castVote: ({ G, ctx, events, playerID }, believe: boolean, targetPlayerID?: string) => {
+                const pID = targetPlayerID || playerID || ctx.currentPlayer;
+                // Evitar que el que pujó o el que desafió cambien su voto predeterminado
+                if (pID === G.currentBid?.playerId || pID === G.challengerId) {
+                  return INVALID_MOVE;
+                }
                 G.votes[pID] = believe;
                 
                 const activePlayersCount = Object.values(G.players).filter(p => p.diceCount > 0).length;

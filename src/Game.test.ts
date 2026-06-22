@@ -57,42 +57,17 @@ function createTestClient(numPlayers: number = 3) {
     });
   };
 
-  let originalCastVote: any = null;
-
-  const wrapCastVote = () => {
-    if (client.moves && client.moves.castVote) {
-      originalCastVote = client.moves.castVote;
-      
-      client.moves.castVote = (believe: boolean) => {
-        const state = client.store.getState();
-        const players = state.G.players;
-        const votes = state.G.votes || {};
-        const activePlayerIds = Object.keys(players).filter(pid => players[pid].diceCount > 0);
-        const nextVoter = activePlayerIds.find(pid => votes[pid] === undefined);
-        
-        if (nextVoter !== undefined) {
-          const oldPID = client.playerID;
-          client.playerID = nextVoter;
-          client.createDispatchers();
-          
-          const res = originalCastVote(believe);
-          
-          client.playerID = oldPID;
-          client.createDispatchers();
-          return res;
-        }
-        return originalCastVote(believe);
-      };
+  client.castRemainingVotes = (votes: Record<string, boolean>) => {
+    for (const pid in votes) {
+      const oldPID = client.playerID;
+      client.playerID = pid;
+      client.createDispatchers();
+      client.moves.castVote(votes[pid]);
+      client.playerID = oldPID;
+      client.createDispatchers();
     }
   };
 
-  const originalCreateDispatchers = client.createDispatchers;
-  client.createDispatchers = () => {
-    originalCreateDispatchers.call(client);
-    wrapCastVote();
-  };
-
-  wrapCastVote();
   return client;
 }
 
@@ -235,10 +210,6 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
       client.moves.submitBid({ amount: 2, symbol: 'Q' });
       client.moves.disbelieve();
 
-      // Only vote with 2 players so the round doesn't end and clear the votes map
-      client.moves.castVote(true);  // player 0
-      client.moves.castVote(false); // player 1
-
       const votes = client.store.getState()!.G.votes;
       expect(votes['0']).toBe(true);
       expect(votes['1']).toBe(false);
@@ -250,10 +221,6 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
 
       client.moves.submitBid({ amount: 2, symbol: 'Q' });
       client.moves.disbelieve();
-
-      // Only 2 players vote (out of 3 active)
-      client.moves.castVote(true);
-      client.moves.castVote(false);
 
       expect(client.store.getState()!.ctx.phase).toBe('voting');
     });
@@ -276,6 +243,11 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
             '2': { diceCount: 5, currentRoll: ['K', 'K', '9', '9', '9'], hasQuintilla: false }, // 2 Kings
           },
           currentBid: { amount: 5, symbol: 'K', value: 29, playerId: '0' },
+          challengerId: '1',
+          votes: {
+            '0': true,
+            '1': false
+          },
           ctx: {
             ...client.store.getState()!.ctx,
             phase: 'voting'
@@ -284,9 +256,7 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
       });
 
       // Total actual count = 1 + 1 + 2 = 4 Kings. Bid is 5. Count (4) == Bid (5) - 1.
-      client.moves.castVote(true);
-      client.moves.castVote(false);
-      client.moves.castVote(false);
+      client.castRemainingVotes({ '2': false });
 
       expect(client.store.getState()!.ctx.phase).toBe('devilDice');
     });
@@ -304,6 +274,11 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
             '2': { diceCount: 5, currentRoll: ['9', '9', '9', '9', '9'], hasQuintilla: false }, // 0 Kings
           },
           currentBid: { amount: 5, symbol: 'K', value: 29, playerId: '0' },
+          challengerId: '1',
+          votes: {
+            '0': true,
+            '1': false
+          },
           ctx: {
             ...client.store.getState()!.ctx,
             phase: 'voting'
@@ -313,9 +288,7 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
 
       // Total actual count = 2 Kings. Bid is 5. Bypass since 2 !== 4.
       // It should immediately resolve and go back to bidding phase.
-      client.moves.castVote(true);
-      client.moves.castVote(false);
-      client.moves.castVote(false);
+      client.castRemainingVotes({ '2': false });
 
       expect(client.store.getState()!.ctx.phase).toBe('bidding');
     });
@@ -333,6 +306,11 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
             '2': { diceCount: 5, currentRoll: ['K', 'K', '9', '9', '9'], hasQuintilla: false },
           },
           currentBid: { amount: 5, symbol: 'K', value: 29, playerId: '0' },
+          challengerId: '1',
+          votes: {
+            '0': true,
+            '1': false
+          },
           ctx: {
             ...client.store.getState()!.ctx,
             phase: 'voting'
@@ -340,9 +318,7 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
         }
       });
 
-      client.moves.castVote(true);
-      client.moves.castVote(false);
-      client.moves.castVote(false);
+      client.castRemainingVotes({ '2': false });
 
       expect(client.store.getState()!.ctx.phase).toBe('devilDice');
 
@@ -378,6 +354,11 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
             '2': { diceCount: 5, currentRoll: ['K', 'K', '9', '9', '9'], hasQuintilla: false },
           },
           currentBid: { amount: 5, symbol: 'K', value: 29, playerId: '0' },
+          challengerId: '1',
+          votes: {
+            '0': true,
+            '1': false
+          },
           ctx: {
             ...client.store.getState()!.ctx,
             phase: 'voting'
@@ -385,9 +366,7 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
         }
       });
 
-      client.moves.castVote(true);
-      client.moves.castVote(false);
-      client.moves.castVote(false);
+      client.castRemainingVotes({ '2': false });
 
       expect(client.store.getState()!.ctx.phase).toBe('devilDice');
 
@@ -427,6 +406,11 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
             '2': { diceCount: 5, currentRoll: ['Q', '9', '9', '9', '9'], hasQuintilla: false }, // 1 Queen
           },
           currentBid: { amount: 4, symbol: 'Q', value: 22, playerId: '0' },
+          challengerId: '1',
+          votes: {
+            '0': true,
+            '1': false
+          },
           ctx: {
             ...client.store.getState()!.ctx,
             phase: 'voting'
@@ -435,9 +419,7 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
       });
 
       // Total actual count = 4 Queens. Bid is 4. (Count 4 >= Bid 4).
-      client.moves.castVote(true);  // P0 survives
-      client.moves.castVote(false); // P1 (disbeliever) should lose a die
-      client.moves.castVote(false); // P2 (disbeliever) should lose a die
+      client.castRemainingVotes({ '2': false }); // Player 2 votes disbelieve (false)
 
       const finalG = client.store.getState()!.G;
       expect(finalG.players['0'].diceCount).toBe(5);
@@ -458,6 +440,11 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
             '2': { diceCount: 5, currentRoll: ['9', '9', '9', '9', '9'], hasQuintilla: false }, // 0 Queens
           },
           currentBid: { amount: 4, symbol: 'Q', value: 22, playerId: '0' },
+          challengerId: '1',
+          votes: {
+            '0': true,
+            '1': false
+          },
           ctx: {
             ...client.store.getState()!.ctx,
             phase: 'voting'
@@ -466,9 +453,7 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
       });
 
       // Total actual count = 2 Queens. Bid is 4. (Count 2 < Bid 4).
-      client.moves.castVote(true);  // P0 (believer) should lose a die
-      client.moves.castVote(false); // P1 survives
-      client.moves.castVote(false); // P2 survives
+      client.castRemainingVotes({ '2': false }); // Player 2 votes disbelieve (false)
 
       const finalG = client.store.getState()!.G;
       expect(finalG.players['0'].diceCount).toBe(4);
@@ -489,6 +474,11 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
             '2': { diceCount: 5, currentRoll: ['9', '9', '9', '9', '9'], hasQuintilla: false },
           },
           currentBid: { amount: 4, symbol: 'Q', value: 22, playerId: '0' },
+          challengerId: '1',
+          votes: {
+            '0': true,
+            '1': false
+          },
           ctx: {
             ...client.store.getState()!.ctx,
             phase: 'voting'
@@ -497,9 +487,7 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
       });
 
       // Total count = 2 Queens. Bid is 4. Believers lose.
-      client.moves.castVote(true);  // P0 (believer, has buffer)
-      client.moves.castVote(false);
-      client.moves.castVote(false);
+      client.castRemainingVotes({ '2': false }); // Player 2 votes disbelieve (false)
 
       const finalG = client.store.getState()!.G;
       // Player 0 loses the Quintilla buffer, so hasQuintilla becomes false and diceCount goes from 6 to 5
@@ -525,6 +513,11 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
             '2': { diceCount: 5, currentRoll: ['9', '9', '9', '9', '9'], hasQuintilla: false },
           },
           currentBid: { amount: 4, symbol: 'Q', value: 22, playerId: '0' },
+          challengerId: '1',
+          votes: {
+            '0': true,
+            '1': false
+          },
           ctx: {
             ...client.store.getState()!.ctx,
             phase: 'voting'
@@ -533,9 +526,7 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
       });
 
       // Total count = 2. Bid = 4. Believers lose.
-      client.moves.castVote(true); // P0 loses their last die
-      client.moves.castVote(false);
-      client.moves.castVote(false);
+      client.castRemainingVotes({ '2': false }); // Player 2 votes disbelieve (false)
 
       const finalG = client.store.getState()!.G;
       expect(finalG.players['0'].diceCount).toBe(0); // Eliminated
@@ -554,18 +545,73 @@ describe('Cubilete Game Logic - Comprehensive Test Suite', () => {
             '2': { diceCount: 0, currentRoll: [], hasQuintilla: false }, // already eliminated
           },
           currentBid: { amount: 4, symbol: 'Q', value: 22, playerId: '0' },
-          ctx: {
-            ...client.store.getState()!.ctx,
-            phase: 'voting'
-          }
+        },
+        ctx: {
+          ...client.store.getState()!.ctx,
+          currentPlayer: '1',
+          phase: 'bidding'
         }
       });
 
-      // Total count = 2. Bid = 4. Believers lose.
-      client.moves.castVote(true); // P0 loses their last die
-      client.moves.castVote(false); // P1 (only active voter left)
+      // Player 1 challenges. With only 2 active players, voting resolves immediately.
+      client.moves.disbelieve();
 
       expect(client.store.getState()!.ctx.gameover).toEqual({ winner: '1' });
+    });
+  });
+
+  // ==========================================
+  // 🎲 7. Selection and Re-rolling Tests
+  // ==========================================
+  describe('7. Selection and Re-rolling Tests', () => {
+    test('Test Case 7.1: Re-rolling Unselected Dice keeps Kept ones', () => {
+      const client = createTestClient();
+
+      client.updateState({
+        ...client.store.getState(),
+        G: {
+          ...client.store.getState()!.G,
+          players: {
+            '0': { diceCount: 5, currentRoll: ['9', '10', 'J', 'Q', 'K'], hasQuintilla: false },
+            '1': { diceCount: 5, currentRoll: ['A', 'A', '10', 'J', 'Q'], hasQuintilla: false },
+            '2': { diceCount: 5, currentRoll: ['9', '10', 'J', 'Q', 'K'], hasQuintilla: false },
+          },
+          reRollsLeft: 1
+        }
+      });
+
+      // Player 0 decides to KEEP indices 0 and 1 ('9' and '10') and re-roll the rest
+      client.moves.reRollDice([0, 1]);
+
+      const state = client.store.getState()!;
+      expect(state.G.reRollsLeft).toBe(0); // Decremented
+      expect(state.G.players['0'].currentRoll[0]).toBe('9');  // Index 0 kept
+      expect(state.G.players['0'].currentRoll[1]).toBe('10'); // Index 1 kept
+    });
+
+    test('Test Case 7.2: Cannot Re-roll when reRollsLeft is 0', () => {
+      const client = createTestClient();
+
+      client.updateState({
+        ...client.store.getState(),
+        G: {
+          ...client.store.getState()!.G,
+          players: {
+            '0': { diceCount: 5, currentRoll: ['9', '10', 'J', 'Q', 'K'], hasQuintilla: false },
+            '1': { diceCount: 5, currentRoll: ['A', 'A', '10', 'J', 'Q'], hasQuintilla: false },
+            '2': { diceCount: 5, currentRoll: ['9', '10', 'J', 'Q', 'K'], hasQuintilla: false },
+          },
+          reRollsLeft: 0
+        }
+      });
+
+      // Attempt to re-roll
+      client.moves.reRollDice([0, 1]);
+      
+      const state = client.store.getState()!;
+      // Should remain 0 and roll shouldn't change
+      expect(state.G.reRollsLeft).toBe(0);
+      expect(state.G.players['0'].currentRoll).toEqual(['9', '10', 'J', 'Q', 'K']);
     });
   });
 });

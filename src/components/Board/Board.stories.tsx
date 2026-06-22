@@ -1,23 +1,172 @@
+import { useState, useEffect } from 'react';
 import type { Meta, StoryObj } from '@storybook/react';
 import { CubileteBoard } from './Board';
-import { GameDirection } from '../../types';
+import { GameDirection, CubileteSymbol } from '../../types';
+
+const SYM_VALUES: Record<CubileteSymbol, number> = { 
+  '9': 1, '10': 2, 'J': 3, 'Q': 4, 'K': 5, 'A': 6 
+};
+
+function getBidValue(amount: number, symbol: CubileteSymbol): number {
+  const baseValue = SYM_VALUES[symbol];
+  return baseValue + (amount - 1) * 6;
+}
+
+// Stateful Wrapper component to enable interactive state updates inside Storybook sandbox
+const InteractiveBoardWrapper = ({ G: initialG, ctx: initialCtx, playerID, reset }: any) => {
+  const [G, setG] = useState(initialG);
+  const [ctx, setCtx] = useState(initialCtx);
+
+  // Sync state when switching between stories
+  useEffect(() => {
+    setG(initialG);
+    setCtx(initialCtx);
+  }, [initialG, initialCtx]);
+
+  const mockMoves = {
+    handleDirectionChange: () => {
+      setG((prev: any) => ({
+        ...prev,
+        direction: prev.direction === GameDirection.CLOCKWISE ? GameDirection.COUNTERCLOCKWISE : GameDirection.CLOCKWISE
+      }));
+    },
+    submitBid: ({ amount, symbol }: { amount: number; symbol: CubileteSymbol }) => {
+      const newValue = getBidValue(amount, symbol);
+      
+      setG((prevG: any) => {
+        const nextG = {
+          ...prevG,
+          reRollsLeft: 1,
+          currentBid: { amount, symbol, value: newValue, playerId: ctx.currentPlayer }
+        };
+
+        // Determine next active player based on direction
+        const activePids = Object.keys(prevG.players).filter(pid => prevG.players[pid].diceCount > 0);
+        const currentIndex = activePids.indexOf(ctx.currentPlayer);
+        const dirStep = prevG.direction === GameDirection.CLOCKWISE ? 1 : -1;
+        const nextIndex = (currentIndex + dirStep + activePids.length) % activePids.length;
+        const nextPlayer = activePids[nextIndex];
+
+        setCtx((prevCtx: any) => ({
+          ...prevCtx,
+          currentPlayer: nextPlayer
+        }));
+
+        return nextG;
+      });
+    },
+    disbelieve: () => {
+      setCtx((prev: any) => ({
+        ...prev,
+        phase: 'voting',
+        activePlayers: { '0': 'voteStage', '1': 'voteStage', '2': 'voteStage' }
+      }));
+      setG((prevG: any) => ({
+        ...prevG,
+        challengerId: ctx.currentPlayer,
+        votes: {
+          [prevG.currentBid.playerId]: true, // El que pujó cree
+          [ctx.currentPlayer]: false         // El que desafía no cree
+        }
+      }));
+    },
+    castVote: (believe: boolean, targetPlayerID?: string) => {
+      setG((prevG: any) => {
+        const nextVotes = { ...prevG.votes };
+        const activePids = Object.keys(prevG.players).filter(pid => prevG.players[pid].diceCount > 0);
+        const pid = targetPlayerID !== undefined ? targetPlayerID : activePids.find(p => nextVotes[p] === undefined);
+        
+        // Evitar que el que pujó o el que desafió cambien su voto
+        if (pid === prevG.currentBid?.playerId || pid === prevG.challengerId) {
+          return prevG;
+        }
+
+        if (pid !== undefined) {
+          nextVotes[pid] = believe;
+        }
+
+        const updatedG = { ...prevG, votes: nextVotes };
+
+        // If everyone has voted, transition
+        if (Object.keys(nextVotes).length === activePids.length) {
+          let total = 0;
+          for (const pid in prevG.players) {
+            total += prevG.players[pid].currentRoll.filter((s: string) => s === prevG.currentBid.symbol).length;
+          }
+
+          if (total === prevG.currentBid.amount - 1) {
+            setCtx((c: any) => ({ ...c, phase: 'devilDice' }));
+            updatedG.devilDiceResult = prevG.currentBid.symbol;
+          } else {
+            setCtx((c: any) => ({ ...c, phase: 'resolution' }));
+          }
+        }
+
+        return updatedG;
+      });
+    },
+    resolveDevilDice: () => {
+      setCtx((prev: any) => ({ ...prev, phase: 'resolution' }));
+    },
+    reRollDice: (keepIndices: number[]) => {
+      if (G.reRollsLeft <= 0) return;
+      const pid = ctx.currentPlayer;
+      const symbols: CubileteSymbol[] = ['9', '10', 'J', 'Q', 'K', 'A'];
+      
+      setG((prevG: any) => {
+        const player = prevG.players[pid];
+        const rollCount = player.hasQuintilla ? player.diceCount - 1 : player.diceCount;
+        const newRoll = [...player.currentRoll];
+        for (let d = 0; d < rollCount; d++) {
+          if (!keepIndices.includes(d)) {
+            newRoll[d] = symbols[Math.floor(Math.random() * 6)];
+          }
+        }
+
+        // Check for Quintilla after re-roll
+        let isQuintilla = player.hasQuintilla;
+        let nextDiceCount = player.diceCount;
+        if (!isQuintilla && newRoll.length >= 5 && newRoll.every(val => val === newRoll[0])) {
+          isQuintilla = true;
+          nextDiceCount += 1;
+        }
+
+        return {
+          ...prevG,
+          reRollsLeft: prevG.reRollsLeft - 1,
+          players: {
+            ...prevG.players,
+            [pid]: {
+              ...player,
+              diceCount: nextDiceCount,
+              hasQuintilla: isQuintilla,
+              currentRoll: newRoll
+            }
+          }
+        };
+      });
+    }
+  };
+
+  const handleReset = () => {
+    if (reset) reset();
+    setG(initialG);
+    setCtx(initialCtx);
+  };
+
+  return <CubileteBoard G={G} ctx={ctx} moves={mockMoves as any} playerID={undefined} reset={handleReset} {...{} as any} />;
+};
 
 const meta: Meta<typeof CubileteBoard> = {
   title: 'Game/CubileteBoard',
   component: CubileteBoard,
+  render: (args) => <InteractiveBoardWrapper {...args} />,
   parameters: {
     layout: 'fullscreen',
   },
   args: {
     reset: () => console.log('Reset clicked'),
-    moves: {
-      handleDirectionChange: () => console.log('handleDirectionChange called'),
-      submitBid: (val: any) => console.log('submitBid called with', val),
-      disbelieve: () => console.log('disbelieve called'),
-      castVote: (believe: boolean) => console.log('castVote called with', believe),
-      resolveDevilDice: () => console.log('resolveDevilDice called'),
-    },
-    playerID: '0', // View as Player 0 by default
+    playerID: '0',
   },
 };
 
@@ -43,6 +192,7 @@ export const FreshRoundSetup: Story = {
       votes: {},
       challengerId: null,
       devilDiceResult: null,
+      reRollsLeft: 1,
     },
     ctx: {
       numPlayers: 3,
@@ -70,17 +220,18 @@ export const MidBiddingTableEscalation: Story = {
       currentBid: {
         amount: 3,
         symbol: 'Q',
-        value: 16, // Calculated: 4 (Q base) + (3-1)*6 = 16
+        value: 16,
         playerId: '1',
       },
       votes: {},
       challengerId: null,
       devilDiceResult: null,
+      reRollsLeft: 1,
     },
     ctx: {
       numPlayers: 3,
       turn: 4,
-      currentPlayer: '0', // It's Player 0's turn to escalate
+      currentPlayer: '0',
       playOrder: ['0', '1', '2'],
       playOrderPos: 0,
       phase: 'bidding',
@@ -107,10 +258,12 @@ export const CollectiveVotingOverlay: Story = {
         playerId: '0',
       },
       votes: {
-        '0': true, // Player 0 has voted (believes their own bid)
+        '0': true,
+        '1': false,
       },
-      challengerId: '1', // Player 1 declared "No Creo"
+      challengerId: '1',
       devilDiceResult: null,
+      reRollsLeft: 0,
     },
     ctx: {
       numPlayers: 3,
@@ -142,7 +295,7 @@ export const DevilDiceRevealSaved: Story = {
       currentBid: {
         amount: 5,
         symbol: 'K',
-        value: 29, // 5 + (5-1)*6 = 29
+        value: 29,
         playerId: '0',
       },
       votes: {
@@ -151,7 +304,8 @@ export const DevilDiceRevealSaved: Story = {
         '2': false,
       },
       challengerId: '1',
-      devilDiceResult: 'K', // Matching symbol! Saves the bidder
+      devilDiceResult: 'K',
+      reRollsLeft: 0,
     },
     ctx: {
       numPlayers: 3,
@@ -188,7 +342,8 @@ export const DevilDiceRevealFailed: Story = {
         '2': false,
       },
       challengerId: '1',
-      devilDiceResult: 'A', // Different symbol! Fails to save the bidder
+      devilDiceResult: 'A',
+      reRollsLeft: 0,
     },
     ctx: {
       numPlayers: 3,
@@ -220,12 +375,13 @@ export const RoundRevelationScorecard: Story = {
         playerId: '0',
       },
       votes: {
-        '0': true,  // Believed (loses because only 3 Qs exist total)
-        '1': false, // Disbelieved (survives because total count 3 < bid 4)
-        '2': true,  // Believed (loses because total count 3 < bid 4)
+        '0': true,
+        '1': false,
+        '2': true,
       },
       challengerId: '1',
       devilDiceResult: null,
+      reRollsLeft: 0,
     },
     ctx: {
       numPlayers: 3,
@@ -250,7 +406,7 @@ export const QuintillaGlow: Story = {
     G: {
       players: {
         '0': { diceCount: 5, currentRoll: ['9', '10', 'J', 'Q', 'K'], hasQuintilla: false },
-        '1': { diceCount: 6, currentRoll: ['Q', 'Q', 'Q', 'Q', 'Q'], hasQuintilla: true }, // Has +1 buffer life
+        '1': { diceCount: 6, currentRoll: ['Q', 'Q', 'Q', 'Q', 'Q'], hasQuintilla: true },
         '2': { diceCount: 5, currentRoll: ['9', '10', 'J', 'Q', 'K'], hasQuintilla: false },
       },
       direction: GameDirection.CLOCKWISE,
@@ -258,6 +414,7 @@ export const QuintillaGlow: Story = {
       votes: {},
       challengerId: null,
       devilDiceResult: null,
+      reRollsLeft: 1,
     },
     ctx: {
       numPlayers: 3,
@@ -268,7 +425,7 @@ export const QuintillaGlow: Story = {
       phase: 'bidding',
       activePlayers: null,
     } as any,
-    playerID: '1', // Focus view on Player 1 to see their card details clearly
+    playerID: '1',
   },
 };
 
@@ -279,7 +436,7 @@ export const VictoryScreen: Story = {
     G: {
       players: {
         '0': { diceCount: 0, currentRoll: [], hasQuintilla: false },
-        '1': { diceCount: 4, currentRoll: ['9', 'Q', 'A', 'J'], hasQuintilla: false }, // Winner
+        '1': { diceCount: 4, currentRoll: ['9', 'Q', 'A', 'J'], hasQuintilla: false },
         '2': { diceCount: 0, currentRoll: [], hasQuintilla: false },
       },
       direction: GameDirection.CLOCKWISE,
@@ -287,6 +444,7 @@ export const VictoryScreen: Story = {
       votes: {},
       challengerId: null,
       devilDiceResult: null,
+      reRollsLeft: 0,
     },
     ctx: {
       numPlayers: 3,
