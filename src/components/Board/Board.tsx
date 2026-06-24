@@ -1,12 +1,69 @@
 import React, { useState, useEffect } from 'react';
 import { BoardProps } from 'boardgame.io/react';
-import { Stage, Container, Graphics, Text } from '@pixi/react';
+import { Stage, Container, Graphics, Text, Sprite } from '@pixi/react';
 import * as PIXI from 'pixi.js';
 import { GameState, CubileteSymbol } from '../../types';
+import woodenTrayImg from '../../assets/wooden-tray.png';
+import cubileteLeatherImg from '../../assets/cubilete-leather.png';
+
+// Dynamically remove white backgrounds in the browser
+const loadTransparentTexture = (url: string, threshold = 240): Promise<PIXI.Texture> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.src = url;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0);
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imgData.data;
+        for (let i = 0; i < data.length; i += 4) {
+          // If R, G, B are all above threshold (white/near-white), set alpha to 0
+          if (data[i] > threshold && data[i + 1] > threshold && data[i + 2] > threshold) {
+            data[i + 3] = 0;
+          }
+        }
+        ctx.putImageData(imgData, 0, 0);
+        resolve(PIXI.Texture.from(canvas));
+      } else {
+        resolve(PIXI.Texture.from(img));
+      }
+    };
+    img.onerror = () => resolve(PIXI.Texture.from(url));
+  });
+};
 
 const SYM_VALUES: Record<CubileteSymbol, number> = { 
   '9': 1, '10': 2, 'J': 3, 'Q': 4, 'K': 5, 'A': 6 
 };
+
+const getHomeSlots = (numPlayers: number): Record<string, { x: number; y: number }> => {
+  const slots: Record<string, { x: number; y: number }> = {
+    '0': { x: 255, y: 265 }, // Bottom-center (Local)
+  };
+
+  if (numPlayers === 5) {
+    slots['1'] = { x: 110, y: 165 };
+    slots['2'] = { x: 185, y: 145 };
+    slots['3'] = { x: 325, y: 145 };
+    slots['4'] = { x: 400, y: 165 };
+  } else if (numPlayers === 4) {
+    slots['1'] = { x: 120, y: 160 };
+    slots['2'] = { x: 255, y: 145 };
+    slots['3'] = { x: 390, y: 160 };
+  } else if (numPlayers === 3) {
+    slots['1'] = { x: 170, y: 145 };
+    slots['2'] = { x: 340, y: 145 };
+  } else if (numPlayers === 2) {
+    slots['1'] = { x: 255, y: 145 };
+  }
+
+  return slots;
+}
 
 function getBidValue(amount: number, symbol: CubileteSymbol): number {
   const baseValue = SYM_VALUES[symbol];
@@ -17,6 +74,8 @@ const PLAYER_AVATARS: Record<string, { name: string; color: string; bg: string; 
   '0': { name: 'Alpha Ranger', color: '#818cf8', bg: 'rgba(99, 102, 241, 0.15)', border: '#6366f1', hexColor: 0x818cf8 },
   '1': { name: 'Vortex Phantom', color: '#34d399', bg: 'rgba(52, 211, 153, 0.15)', border: '#10b981', hexColor: 0x34d399 },
   '2': { name: 'Nebula Sentinel', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.15)', border: '#ec4899', hexColor: 0xf472b6 },
+  '3': { name: 'Solar Vanguard', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.15)', border: '#f59e0b', hexColor: 0xfbbf24 },
+  '4': { name: 'Lunar Shadow', color: '#a78bfa', bg: 'rgba(167, 139, 250, 0.15)', border: '#8b5cf6', hexColor: 0xa78bfa },
 };
 
 const AnimationStyles = () => (
@@ -56,6 +115,19 @@ const AnimationStyles = () => (
 );
 
 // PixiJS Component: Draws a single interactive/animated die on the felt table
+const FACE_SYMBOLS: Record<string, { top: string; right: string }> = {
+  'A': { top: 'K', right: 'Q' },
+  'K': { top: 'Q', right: 'J' },
+  'Q': { top: 'J', right: '10' },
+  'J': { top: '10', right: '9' },
+  '10': { top: '9', right: 'A' },
+  '9': { top: 'A', right: 'K' },
+};
+
+const getSymbolColor = (sym: string): string => {
+  return sym === 'K' || sym === 'J' || sym === '9' ? '#dc2626' : '#1f2937';
+};
+
 interface PixiDieProps {
   symbol: CubileteSymbol | string;
   x: number;
@@ -69,7 +141,7 @@ interface PixiDieProps {
   pointertap?: () => void;
 }
 
-const PixiDieComponent: React.FC<PixiDieProps> = ({
+export const PixiDieComponent: React.FC<PixiDieProps> = ({
   symbol,
   x,
   y,
@@ -82,65 +154,80 @@ const PixiDieComponent: React.FC<PixiDieProps> = ({
   pointertap,
 }) => {
   const size = 50 * scale;
-  
-  const drawDie = React.useCallback((g: PIXI.Graphics) => {
+
+  const draw3DDie = React.useCallback((g: PIXI.Graphics) => {
     g.clear();
-    
-    // Determine styles
-    let fill = 0xffffff;
-    let border = 0xcccccc;
+
+    // Determine colors based on state
+    let frontFill = 0xffffff;
+    let topFill = 0xf1f5f9;
+    let rightFill = 0xe2e8f0;
+    let border = 0x94a3b8;
     let borderWidth = 2;
 
     if (isQuintilla) {
-      fill = 0xfef3c7;
+      frontFill = 0xfef3c7;
+      topFill = 0xfffbeb;
+      rightFill = 0xfde68a;
       border = 0xd97706;
       borderWidth = 3;
     } else if (isSelected) {
-      fill = 0xf0fdf4;
-      border = 0x38bdf8; // Neon light blue border
+      frontFill = 0xf0fdf4;
+      topFill = 0xf0fdf4;
+      rightFill = 0xdcfce7;
+      border = 0x38bdf8;
       borderWidth = 3;
     } else if (isHighlighted) {
-      fill = 0xe0f2fe;
+      frontFill = 0xe0f2fe;
+      topFill = 0xe0f2fe;
+      rightFill = 0xbae6fd;
       border = 0x0284c7;
       borderWidth = 3;
     }
 
-    g.beginFill(fill);
+    const fs = size * 0.72; // Front face size
+    const fx = -fs / 2;
+    const fy = -fs / 2 + size * 0.08;
+
+    // 1. Draw Right Face (medium-light grey)
+    g.beginFill(rightFill);
     g.lineStyle(borderWidth, border, 1);
-    g.drawRoundedRect(-size / 2, -size / 2, size, size, 8);
+    g.moveTo(fs / 2, fy); // Front-Top-Right
+    g.lineTo(fs / 2 + size * 0.1, fy - size * 0.18); // Back-Top-Right
+    g.lineTo(fs / 2 + size * 0.1, fy + fs - size * 0.18); // Back-Bottom-Right
+    g.lineTo(fs / 2, fy + fs); // Front-Bottom-Right
+    g.closePath();
     g.endFill();
 
-    // Draw dots decoration or accents if Quintilla
+    // 2. Draw Top Face (light grey)
+    g.beginFill(topFill);
+    g.lineStyle(borderWidth, border, 1);
+    g.moveTo(fx, fy); // Front-Top-Left
+    g.lineTo(fx + size * 0.1, fy - size * 0.18); // Back-Top-Left
+    g.lineTo(fs / 2 + size * 0.1, fy - size * 0.18); // Back-Top-Right
+    g.lineTo(fs / 2, fy); // Front-Top-Right
+    g.closePath();
+    g.endFill();
+
+    // 3. Draw Front Face (pure white)
+    g.beginFill(frontFill);
+    g.lineStyle(borderWidth + 0.5, border, 1);
+    g.drawRoundedRect(fx, fy, fs, fs, fs * 0.16);
+    g.endFill();
+
+    // Optional: Draw tiny dots accents if Quintilla
     if (isQuintilla) {
       g.beginFill(0xd97706);
-      g.drawCircle(-size / 2 + 6, -size / 2 + 6, 2);
-      g.drawCircle(size / 2 - 6, -size / 2 + 6, 2);
-      g.drawCircle(-size / 2 + 6, size / 2 - 6, 2);
-      g.drawCircle(size / 2 - 6, size / 2 - 6, 2);
+      g.drawCircle(fx + 6, fy + 6, 2);
+      g.drawCircle(fx + fs - 6, fy + 6, 2);
+      g.drawCircle(fx + 6, fy + fs - 6, 2);
+      g.drawCircle(fx + fs - 6, fy + fs - 6, 2);
       g.endFill();
     }
-  }, [isQuintilla, isHighlighted, isSelected, size]);
+  }, [size, isQuintilla, isSelected, isHighlighted]);
 
-  // Determine text styles
-  let textColor = '#1f2937';
-  let fontSize = 22 * scale;
-  let fontWeight = 'bold';
-
-  if (isQuintilla) {
-    textColor = '#b45309';
-  } else if (isSelected) {
-    textColor = '#0284c7';
-  } else if (isHighlighted) {
-    textColor = '#0369a1';
-  }
-
-  const textStyle = new PIXI.TextStyle({
-    fontFamily: 'Arial, sans-serif',
-    fontSize,
-    fontWeight: fontWeight as any,
-    fill: textColor,
-    align: 'center',
-  });
+  const topSym = FACE_SYMBOLS[symbol]?.top ?? 'K';
+  const rightSym = FACE_SYMBOLS[symbol]?.right ?? 'Q';
 
   return (
     <Container 
@@ -150,37 +237,70 @@ const PixiDieComponent: React.FC<PixiDieProps> = ({
       interactive={interactive}
       pointertap={pointertap}
     >
-      <Graphics draw={drawDie} />
+      <Graphics draw={draw3DDie} />
+      
+      {/* Top Face Symbol */}
+      <Text
+        text={topSym}
+        anchor={0.5}
+        x={size * 0.05}
+        y={-size * 0.35}
+        rotation={-0.3}
+        style={new PIXI.TextStyle({
+          fontFamily: 'Arial, sans-serif',
+          fontSize: 10 * scale,
+          fontWeight: 'bold',
+          fill: getSymbolColor(topSym),
+          align: 'center',
+        })}
+      />
+
+      {/* Right Face Symbol */}
+      <Text
+        text={rightSym}
+        anchor={0.5}
+        x={size * 0.41}
+        y={-size * 0.02}
+        rotation={0.3}
+        style={new PIXI.TextStyle({
+          fontFamily: 'Arial, sans-serif',
+          fontSize: 10 * scale,
+          fontWeight: 'bold',
+          fill: getSymbolColor(rightSym),
+          align: 'center',
+        })}
+      />
+
+      {/* Main Front Face Symbol */}
       <Text
         text={symbol}
         anchor={0.5}
         x={0}
-        y={0}
-        style={textStyle}
+        y={size * 0.08}
+        style={new PIXI.TextStyle({
+          fontFamily: 'Arial, sans-serif',
+          fontSize: 22 * scale,
+          fontWeight: 'bold',
+          fill: getSymbolColor(symbol),
+          align: 'center',
+        })}
       />
     </Container>
   );
 };
 
-// PixiJS Component: Green Felt Table background
-const PixiFeltTable: React.FC<{ width: number; height: number }> = ({ width, height }) => {
-  const drawFelt = React.useCallback((g: PIXI.Graphics) => {
-    g.clear();
-    // Inner felt
-    g.beginFill(0x112219);
-    g.drawRect(0, 0, width, height);
-    g.endFill();
-    
-    // Felt borders/wood rim
-    g.lineStyle(8, 0x1f1610, 1);
-    g.drawRect(4, 4, width - 8, height - 8);
-    
-    // Golden border inlay
-    g.lineStyle(2, 0xd97706, 0.4);
-    g.drawRect(12, 12, width - 24, height - 24);
-  }, [width, height]);
-
-  return <Graphics draw={drawFelt} />;
+// PixiJS Component: Circular Wood Tray background
+const PixiFeltTable: React.FC<{ width: number; height: number; texture: PIXI.Texture | null }> = ({ width, height, texture }) => {
+  if (!texture) return null;
+  return (
+    <Sprite
+      texture={texture}
+      width={width}
+      height={height}
+      x={0}
+      y={0}
+    />
+  );
 };
 
 export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
@@ -200,6 +320,47 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
   const [shakingOffsets, setShakingOffsets] = useState<Array<{ r: number; dx: number; dy: number }>>([]);
 
   const [activeTabPlayer, setActiveTabPlayer] = useState<string>('0');
+  const [showDebug, setShowDebug] = useState(true);
+  const [clickedCoords, setClickedCoords] = useState<{ x: number; y: number } | null>(null);
+  const [liftedCups, setLiftedCups] = useState<Record<string, boolean>>({});
+
+  const toggleCupLifted = (pid: string) => {
+    setLiftedCups((prev) => ({
+      ...prev,
+      [pid]: !prev[pid],
+    }));
+  };
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.round(e.clientX - rect.left);
+    const y = Math.round(e.clientY - rect.top);
+    setClickedCoords({ x, y });
+  };
+
+  // Transparent textures state
+  const [textures, setTextures] = useState<Record<string, PIXI.Texture | null>>({
+    tray: null,
+    leather: null,
+  });
+
+  useEffect(() => {
+    let isMounted = true;
+    Promise.all([
+      loadTransparentTexture(woodenTrayImg),
+      loadTransparentTexture(cubileteLeatherImg),
+    ]).then(([trayTex, leatherTex]) => {
+      if (isMounted) {
+        setTextures({
+          tray: trayTex,
+          leather: leatherTex,
+        });
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const isGameOver = !!ctx.gameover;
   const currentPhase = ctx.phase;
@@ -813,101 +974,191 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
     );
   };
 
+  // Debug Helpers to draw alignment grid and bounding boxes
+  const drawDebugGrid = React.useCallback((g: PIXI.Graphics) => {
+    g.clear();
+    
+    // Draw vertical grid lines every 50px
+    for (let x = 50; x < 510; x += 50) {
+      const isCenter = Math.abs(x - 250) < 5;
+      g.lineStyle(isCenter ? 2 : 1, isCenter ? 0xef4444 : 0x10b981, 0.4);
+      g.moveTo(x, 0);
+      g.lineTo(x, 320);
+    }
+    // Draw exact center line at 255
+    g.lineStyle(2, 0x38bdf8, 0.6);
+    g.moveTo(255, 0);
+    g.lineTo(255, 320);
+
+    // Draw horizontal grid lines every 50px
+    for (let y = 50; y < 320; y += 50) {
+      g.lineStyle(1, 0x10b981, 0.4);
+      g.moveTo(0, y);
+      g.lineTo(510, y);
+    }
+  }, []);
+
+  const drawCupBounds = React.useCallback((g: PIXI.Graphics) => {
+    g.clear();
+    const numPlayers = Object.keys(G.players).length;
+    const homeSlots = getHomeSlots(numPlayers);
+
+    // Draw bounds for each slot
+    Object.keys(G.players).forEach((pid) => {
+      const slot = homeSlots[pid];
+      if (!slot) return;
+
+      const isActive = pid === activeTabPlayer;
+      const w = isActive ? 180 : 120;
+      const h = isActive ? 100 : 67;
+      const cx = isActive ? 255 : slot.x;
+      const cy = isActive ? 265 : slot.y;
+
+      // Draw bounding box
+      g.lineStyle(2, isActive ? 0xef4444 : 0xf59e0b, 0.8);
+      g.drawRect(cx - w / 2, cy - h / 2, w, h);
+      
+      // Draw anchor point (center)
+      g.beginFill(isActive ? 0xef4444 : 0xf59e0b);
+      g.drawCircle(cx, cy, 3);
+      g.endFill();
+    });
+  }, [G.players, activeTabPlayer]);
+
   // Helper to determine what to render inside the PixiJS canvas
   const renderPixiElements = () => {
-    // 1. Devil's Die Phase: Render a single large spinning Devil's Die in the center
-    if (currentPhase === 'devilDice' && G.devilDiceResult) {
-      const isSaved = G.devilDiceResult === G.currentBid?.symbol;
-      // We animate the rotation by referencing a timestamp inside React/PixiJS
-      const t = Date.now() / 1000;
-      return (
-        <Container x={270} y={170}>
-          <PixiDieComponent 
-            symbol={G.devilDiceResult} 
-            x={0} 
-            y={0} 
-            scale={2.0} 
-            isHighlighted={isSaved}
-            rotation={isSaved ? 0 : t * 0.5} 
-          />
-          <Text 
-            text="Devil's Die" 
-            anchor={0.5} 
-            y={80} 
-            style={new PIXI.TextStyle({ fontFamily: 'Arial', fontSize: 16, fill: '#ef4444', fontWeight: 'bold' })} 
-          />
-        </Container>
-      );
-    }
+    const numPlayers = Object.keys(G.players).length;
+    const homeSlots = getHomeSlots(numPlayers);
 
-    // 2. Voting/Scorecard/Bidding: Render standard player dice
-    const pRoll = G.players[activeTabPlayer]?.currentRoll || [];
-    const hasBuffer = G.players[activeTabPlayer]?.hasQuintilla;
-    const bidSymbol = G.currentBid?.symbol;
-    const isMyTurn = currentPlayer === playerID || !playerID;
-    const canInteractWithDice = isMyTurn && currentPhase === 'bidding' && G.reRollsLeft > 0 && activeTabPlayer === currentPlayer;
+    const leatherTex = textures.leather;
+    if (!leatherTex) return null;
 
     return (
-      <Container x={20} y={40}>
-        {/* Render Title info */}
-        <Text 
-          text={`${getPlayerDetails(activeTabPlayer).name}'s Dice Pool`}
-          x={10}
-          y={10}
-          style={new PIXI.TextStyle({ fontFamily: 'Arial', fontSize: 16, fill: '#f3f4f6', fontWeight: 'bold' })}
-        />
-
-        {/* Normal dice pool (up to 5) */}
-        {pRoll.map((sym, index) => {
-          const shake = shakingOffsets[index] || { dx: 0, dy: 0, r: 0 };
-          const posX = 70 + index * 80 + shake.dx;
-          const posY = 130 + shake.dy;
-          const isMatch = sym === bidSymbol;
-          const isSelected = selectedDiceIndices.includes(index);
-          return (
-            <PixiDieComponent
-              key={index}
-              symbol={sym}
-              x={posX}
-              y={posY}
-              isHighlighted={isMatch}
-              isSelected={isSelected}
-              rotation={shake.r}
-              interactive={canInteractWithDice}
-              pointertap={() => handleToggleDieSelect(index)}
-            />
-          );
-        })}
-
-        {/* Quintilla buffer extra life (6th die) */}
-        {hasBuffer && (
-          <Container x={70} y={230}>
-            <PixiDieComponent 
-              symbol="+1" 
-              x={0} 
-              y={0} 
-              isQuintilla={true} 
-            />
-            <Text 
-              text="Quintilla Life" 
-              anchor={0.5} 
-              y={45} 
-              style={new PIXI.TextStyle({ fontFamily: 'Arial', fontSize: 11, fill: '#f59e0b', fontWeight: 'bold' })} 
-            />
+      <Container>
+        {showDebug && <Graphics draw={drawDebugGrid} />}
+        {showDebug && <Graphics draw={drawCupBounds} />}
+        
+        {/* Draw coordinate labels when debug is enabled */}
+        {showDebug && (
+          <Container>
+            <Text text="x: 255 (Center)" x={260} y={10} style={new PIXI.TextStyle({ fill: '#38bdf8', fontSize: 10, fontFamily: 'Arial', fontWeight: 'bold' })} />
+            {numPlayers === 5 && (
+              <>
+                <Text text="y: 145 (Inner Opponents)" x={10} y={130} style={new PIXI.TextStyle({ fill: '#f59e0b', fontSize: 10, fontFamily: 'Arial' })} />
+                <Text text="y: 165 (Outer Opponents)" x={10} y={150} style={new PIXI.TextStyle({ fill: '#f59e0b', fontSize: 10, fontFamily: 'Arial' })} />
+              </>
+            )}
+            {numPlayers === 4 && (
+              <>
+                <Text text="y: 145 (Center Opponent)" x={10} y={130} style={new PIXI.TextStyle({ fill: '#f59e0b', fontSize: 10, fontFamily: 'Arial' })} />
+                <Text text="y: 160 (Outer Opponents)" x={10} y={150} style={new PIXI.TextStyle({ fill: '#f59e0b', fontSize: 10, fontFamily: 'Arial' })} />
+              </>
+            )}
+            {numPlayers === 3 && (
+              <Text text="y: 145 (Opponents)" x={10} y={130} style={new PIXI.TextStyle({ fill: '#f59e0b', fontSize: 10, fontFamily: 'Arial' })} />
+            )}
+            {numPlayers === 2 && (
+              <Text text="y: 145 (Opponent)" x={10} y={130} style={new PIXI.TextStyle({ fill: '#f59e0b', fontSize: 10, fontFamily: 'Arial' })} />
+            )}
+            <Text text="y: 265 (Main Player)" x={10} y={270} style={new PIXI.TextStyle({ fill: '#ef4444', fontSize: 10, fontFamily: 'Arial', fontWeight: 'bold' })} />
           </Container>
         )}
 
-        {isDiceShaking && (
-          <Text
-            text="🎲 Rolling..."
-            x={10}
-            y={245}
-            style={new PIXI.TextStyle({ fontFamily: 'Arial', fontSize: 13, fill: '#34d399', fontWeight: 'bold' })}
-          />
-        )}
+        {/* 1. Render the player's dice pool (sits underneath the cup in Z-order) */}
+        {Object.keys(G.players).map((pid) => {
+          const pData = G.players[pid];
+          const isEliminated = pData.diceCount === 0;
+          const isActive = pid === activeTabPlayer;
+          const isLifted = liftedCups[pid];
+
+          if (isEliminated || !isLifted || !pData.currentRoll || pData.currentRoll.length === 0) {
+            return null;
+          }
+
+          let targetX = homeSlots[pid]?.x ?? 255;
+          let targetY = homeSlots[pid]?.y ?? 150;
+
+          if (isActive) {
+            targetX = 255;
+            targetY = 265;
+          }
+
+          const k = pData.currentRoll.length;
+          const spacing = isActive ? 22 : 14;
+          const dieScale = isActive ? 0.55 : 0.35;
+
+          return (
+            <Container key={`dice-${pid}`}>
+              {pData.currentRoll.map((symbol, idx) => {
+                const dx = (idx - (k - 1) / 2) * spacing;
+                const dy = (idx % 2 === 0 ? 2 : -2);
+
+                return (
+                  <PixiDieComponent
+                    key={idx}
+                    symbol={symbol}
+                    x={targetX + dx}
+                    y={targetY + dy}
+                    scale={dieScale}
+                  />
+                );
+              })}
+            </Container>
+          );
+        })}
+
+        {/* 2. Render the cups on top */}
+        {Object.keys(G.players).map((pid) => {
+          const cupTexture = leatherTex;
+          const isEliminated = G.players[pid].diceCount === 0;
+          const isActive = pid === activeTabPlayer;
+          const isLifted = liftedCups[pid];
+
+          let targetX = homeSlots[pid]?.x ?? 255;
+          let targetY = homeSlots[pid]?.y ?? 150;
+          let width = 120;
+          let height = 67;
+          let shakeX = 0;
+          let shakeY = 0;
+          let shakeRot = 0;
+
+          if (isActive) {
+            targetX = 255;
+            targetY = 265; // Main cup goes further down in the bottom part of the tray
+            width = 180;
+            height = 100;
+            shakeX = isDiceShaking ? (Math.random() - 0.5) * 15 : 0;
+            shakeY = isDiceShaking ? (Math.random() - 0.5) * 15 : 0;
+            shakeRot = isDiceShaking ? (Math.random() - 0.5) * 0.2 : 0;
+          }
+
+          const liftOffset = isActive ? 90 : 60;
+          const cupY = isLifted ? targetY - liftOffset : targetY;
+
+          return (
+            <Sprite
+              key={pid}
+              texture={cupTexture}
+              anchor={0.5}
+              width={width}
+              height={height}
+              x={targetX + shakeX}
+              y={cupY + shakeY}
+              rotation={shakeRot}
+              alpha={isEliminated ? 0.25 : 1}
+              interactive={!isEliminated}
+              pointertap={() => toggleCupLifted(pid)}
+              cursor="pointer"
+            />
+          );
+        })}
       </Container>
     );
   };
+
+  // Suppress unused compiler warnings for temporary dice omission
+  void shakingOffsets;
+  void handleToggleDieSelect;
 
   return (
     <div style={styles.container}>
@@ -917,33 +1168,21 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={styles.title}>Cubilete Variation</h1>
-            <p style={styles.subtitle}>Developer Debugging Dashboard</p>
+            <p style={styles.subtitle}>{showDebug ? 'Developer Debugging Dashboard' : 'Premium Table View'}</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: '500' }}>View As:</span>
-              <select
-                value={localPlayerID || 'spectator'}
-                onChange={(e) => setLocalPlayerID(e.target.value === 'spectator' ? null : e.target.value)}
-                style={{
-                  ...styles.select,
-                  padding: '4px 8px',
-                  fontSize: '12px',
-                  backgroundColor: 'rgba(255,255,255,0.05)',
-                  color: '#f3f4f6',
-                  borderColor: 'rgba(255,255,255,0.1)',
-                  height: 'auto',
-                  width: 'auto'
-                }}
-              >
-                <option value="0">Player 0 (Alpha)</option>
-                <option value="1">Player 1 (Vortex)</option>
-                <option value="2">Player 2 (Nebula)</option>
-                <option value="spectator">Spectator (All)</option>
-              </select>
-            </div>
-            <button onClick={() => reset?.()} style={{ ...styles.button, padding: '6px 12px', fontSize: '12px' }}>
-              🔄 Reset Game State
+            <button 
+              onClick={() => setShowDebug(!showDebug)} 
+              style={{ 
+                ...styles.button, 
+                padding: '6px 12px', 
+                fontSize: '12px',
+                backgroundColor: showDebug ? 'rgba(239, 68, 68, 0.15)' : 'rgba(56, 189, 248, 0.15)',
+                color: showDebug ? '#ef4444' : '#38bdf8',
+                borderColor: showDebug ? 'rgba(239, 68, 68, 0.3)' : 'rgba(56, 189, 248, 0.3)'
+              }}
+            >
+              {showDebug ? 'Hide Debug View' : 'Show Debug View'}
             </button>
           </div>
         </div>
@@ -991,54 +1230,183 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
         <div style={styles.leftCol}>
           {/* PixiJS Interactive Felt Table Card */}
           <div style={styles.card}>
-            <h3 style={styles.cardTitle}>Felt Table Canvas (React-PixiJS)</h3>
+            <h3 style={styles.cardTitle}>Game Board (Wooden Table Tray)</h3>
             <div style={styles.feltContainer}>
-              <Stage width={510} height={320} options={{ backgroundColor: 0x112219, antialias: true }}>
-                <PixiFeltTable width={510} height={320} />
-                {renderPixiElements()}
-              </Stage>
+              <div 
+                style={{ position: 'relative', width: '510px', height: '320px', cursor: 'crosshair' }}
+                onClick={handleCanvasClick}
+              >
+                <Stage 
+                  width={510} 
+                  height={320} 
+                  options={{ backgroundAlpha: 0, antialias: true }}
+                >
+                  <PixiFeltTable width={510} height={320} texture={textures.tray} />
+                  {renderPixiElements()}
+                </Stage>
+
+                {/* HTML Coordinate Overlay Tooltip */}
+                {clickedCoords && (
+                  <>
+                    {/* Crosshair Dot */}
+                    <div style={{
+                      position: 'absolute',
+                      left: `${clickedCoords.x}px`,
+                      top: `${clickedCoords.y}px`,
+                      width: '8px',
+                      height: '8px',
+                      backgroundColor: '#ef4444',
+                      borderRadius: '50%',
+                      border: '1.5px solid #ffffff',
+                      transform: 'translate(-50%, -50%)',
+                      pointerEvents: 'none',
+                      boxShadow: '0 0 6px rgba(239, 68, 68, 0.9)',
+                      zIndex: 9
+                    }} />
+
+                    {/* Tooltip Label */}
+                    <div style={{
+                      position: 'absolute',
+                      left: `${clickedCoords.x}px`,
+                      top: `${clickedCoords.y}px`,
+                      transform: 'translate(-50%, -130%)',
+                      backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                      border: '1px solid #38bdf8',
+                      color: '#38bdf8',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '11px',
+                      fontWeight: 'bold',
+                      pointerEvents: 'none',
+                      boxShadow: '0 4px 10px rgba(0,0,0,0.5)',
+                      zIndex: 10,
+                      whiteSpace: 'nowrap',
+                      fontFamily: 'Arial, sans-serif'
+                    }}>
+                      X: {clickedCoords.x}, Y: {clickedCoords.y}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
           <div style={styles.card}>
             <h3 style={styles.cardTitle}>Player Rosters</h3>
-            <div style={styles.tabs}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {Object.keys(G.players).map(pid => {
                 const pInfo = getPlayerDetails(pid);
-                const isEliminated = G.players[pid].diceCount === 0;
+                const pData = G.players[pid];
+                const isEliminated = pData.diceCount === 0;
+                const isCurrentTurn = pid === currentPlayer;
+                const isSelected = pid === activeTabPlayer;
+
                 return (
-                  <button
+                  <div 
                     key={pid}
                     onClick={() => setActiveTabPlayer(pid)}
                     style={{
-                      ...styles.tabButton,
-                      borderBottom: activeTabPlayer === pid ? `2px solid ${pInfo.color}` : 'none',
-                      color: activeTabPlayer === pid ? '#f3f4f6' : '#9ca3af',
-                      fontWeight: activeTabPlayer === pid ? 'bold' : 'normal',
-                      opacity: isEliminated ? 0.5 : 1
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                      padding: '12px',
+                      borderRadius: '8px',
+                      backgroundColor: isSelected ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)',
+                      border: isSelected 
+                        ? `1px solid ${pInfo.color}` 
+                        : isCurrentTurn 
+                          ? '1px dashed rgba(56, 189, 248, 0.4)' 
+                          : '1px solid rgba(255,255,255,0.05)',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      opacity: isEliminated ? 0.4 : 1,
                     }}
                   >
-                    Player {pid} {isEliminated ? '(Dead)' : ''}
-                  </button>
+                    {/* Header: Avatar, Name, Turn Indicator, Dice Count */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{
+                          ...styles.avatarSmall,
+                          backgroundColor: pInfo.bg,
+                          color: pInfo.color,
+                          borderColor: pInfo.border,
+                          width: '26px',
+                          height: '26px',
+                          lineHeight: '24px',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          textAlign: 'center'
+                        }}>
+                          {pid}
+                        </div>
+                        <span style={{ fontWeight: 'bold', color: pInfo.color, fontSize: '13.5px' }}>
+                          {pInfo.name}
+                        </span>
+                        {isCurrentTurn && (
+                          <span style={{
+                            fontSize: '9px',
+                            fontWeight: 'bold',
+                            backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                            color: '#38bdf8',
+                            border: '1px solid rgba(56, 189, 248, 0.3)',
+                            padding: '1px 5px',
+                            borderRadius: '4px',
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em'
+                          }}>
+                            Turn
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span style={{ fontSize: '12px', color: '#9ca3af' }}>Dice:</span>
+                        <strong style={{ color: '#f3f4f6', fontSize: '14px' }}>
+                          {pData.diceCount}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {/* Body: Rolled Dice Pool */}
+                    {!isEliminated && pData.currentRoll && pData.currentRoll.length > 0 ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                        <span style={{ fontSize: '11px', color: '#6b7280' }}>Roll:</span>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {pData.currentRoll.map((symbol, idx) => (
+                            <div
+                              key={idx}
+                              style={{
+                                width: '22px',
+                                height: '22px',
+                                backgroundColor: '#ffffff',
+                                border: '1.5px solid #cbd5e1',
+                                borderBottom: '2.5px solid #94a3b8',
+                                borderRadius: '4px',
+                                color: getSymbolColor(symbol),
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '11px',
+                                fontWeight: 'bold',
+                                boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                              }}
+                            >
+                              {symbol}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : !isEliminated ? (
+                      <div style={{ fontSize: '11px', color: '#4b5563', fontStyle: 'italic', marginTop: '2px' }}>
+                        No active roll (waiting)
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '11px', color: '#ef4444', fontWeight: '500', marginTop: '2px' }}>
+                        💀 Eliminated
+                      </div>
+                    )}
+                  </div>
                 );
               })}
-            </div>
-            
-            <div style={styles.tabContent}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div style={styles.metaLabel}>Player Name</div>
-                  <strong style={{ color: getPlayerDetails(activeTabPlayer).color, fontSize: '16px' }}>
-                    {getPlayerDetails(activeTabPlayer).name}
-                  </strong>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={styles.metaLabel}>Dice Count</div>
-                  <strong style={{ color: '#f3f4f6', fontSize: '18px' }}>
-                    {G.players[activeTabPlayer]?.diceCount}
-                  </strong>
-                </div>
-              </div>
             </div>
           </div>
         </div>
@@ -1055,12 +1423,81 @@ export const CubileteBoard: React.FC<BoardProps<GameState>> = ({
             </>
           )}
 
-          <div style={styles.card}>
-            <h3 style={styles.cardTitle}>State Inspector</h3>
-            <pre style={styles.pre}>
-              {JSON.stringify({ G, ctx, playerID: localPlayerID }, null, 2)}
-            </pre>
-          </div>
+          {showDebug && (
+            <div style={styles.card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '10px' }}>
+                <h3 style={{ ...styles.cardTitle, margin: 0 }}>Debug & Developer Tools</h3>
+                <button onClick={() => reset?.()} style={{ ...styles.button, padding: '4px 8px', fontSize: '11px', backgroundColor: 'rgba(239, 68, 68, 0.1)' }}>
+                  🔄 Reset Game State
+                </button>
+              </div>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '15px' }}>
+                <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: '500' }}>Simulate Player View:</span>
+                <select
+                  value={localPlayerID || 'spectator'}
+                  onChange={(e) => setLocalPlayerID(e.target.value === 'spectator' ? null : e.target.value)}
+                  style={{
+                    ...styles.select,
+                    padding: '4px 8px',
+                    fontSize: '12px',
+                    backgroundColor: 'rgba(255,255,255,0.05)',
+                    color: '#f3f4f6',
+                    borderColor: 'rgba(255,255,255,0.1)',
+                    height: 'auto',
+                    width: 'auto'
+                  }}
+                >
+                  <option value="0">Player 0 (Alpha)</option>
+                  <option value="1">Player 1 (Vortex)</option>
+                  <option value="2">Player 2 (Nebula)</option>
+                  <option value="3">Player 3 (Solar)</option>
+                  <option value="4">Player 4 (Lunar)</option>
+                  <option value="spectator">Spectator (All)</option>
+                </select>
+              </div>
+
+              {clickedCoords && (
+                <div style={{
+                  backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                  border: '1px solid rgba(56, 189, 248, 0.2)',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  marginBottom: '15px',
+                  fontSize: '12px',
+                  color: '#38bdf8',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  fontFamily: 'Arial, sans-serif'
+                }}>
+                  <span>📍 Clicked: <strong>X: {clickedCoords.x}, Y: {clickedCoords.y}</strong></span>
+                  <button 
+                    onClick={() => setClickedCoords(null)}
+                    style={{
+                      backgroundColor: 'transparent',
+                      border: 'none',
+                      color: '#9ca3af',
+                      cursor: 'pointer',
+                      fontSize: '11px',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      borderWidth: '1px',
+                      borderStyle: 'solid',
+                      borderColor: 'rgba(255,255,255,0.15)'
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+
+              <h4 style={{ fontSize: '12px', color: '#9ca3af', marginBottom: '5px' }}>Raw State:</h4>
+              <pre style={styles.pre}>
+                {JSON.stringify({ G, ctx, playerID: localPlayerID }, null, 2)}
+              </pre>
+            </div>
+          )}
         </div>
       </div>
 

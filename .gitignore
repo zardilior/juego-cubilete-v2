@@ -1,3 +1,4 @@
+.DS_Store
 # Logs
 logs
 *.log
@@ -15,6 +16,7 @@ jspm_packages/
 
 # Output directories
 dist/
+dist/*
 storybook-static/
 
 # IDEs and editors

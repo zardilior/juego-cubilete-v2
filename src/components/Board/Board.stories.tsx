@@ -13,7 +13,7 @@ function getBidValue(amount: number, symbol: CubileteSymbol): number {
 }
 
 // Stateful Wrapper component to enable interactive state updates inside Storybook sandbox
-const InteractiveBoardWrapper = ({ G: initialG, ctx: initialCtx, playerID, reset }: any) => {
+const InteractiveBoardWrapper = ({ G: initialG, ctx: initialCtx, playerID: _playerID, reset }: any) => {
   const [G, setG] = useState(initialG);
   const [ctx, setCtx] = useState(initialCtx);
 
